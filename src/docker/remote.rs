@@ -405,7 +405,7 @@ impl ContainerDataVolume<'_, '_, '_> {
         copy_cache: bool,
         msg_info: &mut MessageInfo,
     ) -> Result<()> {
-        let dockerignore = DockerIgnore::from_dir(src)?;
+        let dockerignore = DockerIgnore::from_dir(src, self.engine.kind, msg_info)?;
         let copy_all = |info: &mut MessageInfo| {
             self.copy_files_filtered(
                 src,
@@ -1201,6 +1201,7 @@ symlink_recurse \"${{prefix}}\"
 #[cfg(test)]
 mod tests {
     use super::{is_cargo_json_message, parse_artifact_filenames};
+    use crate::docker::EngineType;
 
     #[test]
     fn cargo_json_message_detection() {
@@ -1329,7 +1330,8 @@ temp/*
         )
         .unwrap();
 
-        let di = super::DockerIgnore::from_dir(root).unwrap();
+        let di = super::DockerIgnore::from_dir(root, EngineType::Docker, &mut Default::default())
+            .unwrap();
         let fp = super::Fingerprint::read_dir(root, true, &di).unwrap();
 
         assert!(fp.map.contains_key("src/lib.rs"));
@@ -1385,7 +1387,8 @@ temp/*
         )
         .unwrap();
 
-        let di = super::DockerIgnore::from_dir(root).unwrap();
+        let di = super::DockerIgnore::from_dir(root, EngineType::Docker, &mut Default::default())
+            .unwrap();
         let fp = super::Fingerprint::read_dir(root, true, &di).unwrap();
 
         assert!(fp.map.contains_key("target/keep.txt"));

@@ -6,6 +6,9 @@ use eyre::Context;
 
 use crate::errors::Result;
 use crate::file::PathExt;
+use crate::shell::MessageInfo;
+
+use super::engine::EngineType;
 
 #[derive(Debug, Clone)]
 pub struct DockerIgnoreRule {
@@ -28,9 +31,31 @@ impl DockerIgnore {
         self.rules.is_empty()
     }
 
-    pub fn from_dir(dir: &Path) -> Result<Self> {
-        let ignore_file = dir.join(".dockerignore");
+    pub fn from_dir(
+        dir: &Path,
+        engine_kind: EngineType,
+        msg_info: &mut MessageInfo,
+    ) -> Result<Self> {
+        let containerignore = dir.join(".containerignore");
+        let dockerignore = dir.join(".dockerignore");
+        let (ignore_file, is_containerignore) =
+            if engine_kind.is_podman() && containerignore.is_file() {
+                (containerignore, true)
+            } else if dockerignore.is_file() {
+                (dockerignore, false)
+            } else {
+                (containerignore, true)
+            };
         if ignore_file.is_file() {
+            if engine_kind.is_podman() && !is_containerignore {
+                msg_info.warn(format_args!(
+                    "using `.dockerignore` with podman; consider renaming it to `.containerignore`"
+                ))?;
+            } else if !engine_kind.is_podman() && is_containerignore {
+                msg_info.warn(format_args!(
+                    "using `.containerignore` with docker; consider renaming it to `.dockerignore`"
+                ))?;
+            }
             Self::from_path(&ignore_file)
         } else {
             Ok(Self::empty())
