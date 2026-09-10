@@ -240,7 +240,17 @@ mod tests {
 
     #[test]
     fn test_dockerignore_parsing() {
-        let content = "\u{feff}# Comment line\n\n  # Indented comment\n  target/  \n/src//*.rs\n!/src/main.rs\n./build/\n";
+        let content = concat!(
+            "\u{feff}",
+            r#"# Comment line
+
+  # Indented comment
+  target/  
+/src//*.rs
+!/src/main.rs
+./build/
+"#
+        );
         let di = DockerIgnore::parse(content).unwrap();
         assert_eq!(di.rules.len(), 4);
 
@@ -263,7 +273,12 @@ mod tests {
 
     #[test]
     fn test_dockerignore_matching_basic() {
-        let content = "target\n*.md\n**/*.log\n*/temp*\ntemp?\n";
+        let content = r#"target
+*.md
+**/*.log
+*/temp*
+temp?
+"#;
         let di = DockerIgnore::parse(content).unwrap();
 
         // target matches at root
@@ -299,7 +314,8 @@ mod tests {
 
     #[test]
     fn test_dockerignore_dir_only() {
-        let content = "logs/\n";
+        let content = r#"logs/
+"#;
         let di = DockerIgnore::parse(content).unwrap();
 
         // logs/ should match directory, but not file named logs
@@ -312,7 +328,10 @@ mod tests {
 
     #[test]
     fn test_dockerignore_exceptions() {
-        let content = "*.md\n!README*.md\nREADME-secret.md\n";
+        let content = r#"*.md
+!README*.md
+README-secret.md
+"#;
         let di = DockerIgnore::parse(content).unwrap();
 
         assert!(!di.is_ignored("README.md", false));
@@ -325,16 +344,23 @@ mod tests {
     #[test]
     fn test_dockerignore_nested_exceptions() {
         // Moby test case
-        let content = "**\n!util/docker/web\n";
+        let content = r#"**
+!util/docker/web
+"#;
         let di = DockerIgnore::parse(content).unwrap();
         assert!(!di.is_ignored("util/docker/web/foo", false));
 
-        let content2 = "**\n!util/docker/web\nutil/docker/web/foo\n";
+        let content2 = r#"**
+!util/docker/web
+util/docker/web/foo
+"#;
         let di2 = DockerIgnore::parse(content2).unwrap();
         assert!(di2.is_ignored("util/docker/web/foo", false));
 
         // Directory recursion exception
-        let content3 = "target/**\n!target/keep.txt\n";
+        let content3 = r#"target/**
+!target/keep.txt
+"#;
         let di3 = DockerIgnore::parse(content3).unwrap();
         assert!(!di3.is_ignored("target", true));
         assert!(!di3.is_ignored("target/keep.txt", false));
@@ -343,7 +369,12 @@ mod tests {
 
     #[test]
     fn test_dockerignore_dir_exception() {
-        let content = "target/\n!target/keep.txt\nlogs/\n!logs/**/*.log\nbuild/\n";
+        let content = r#"target/
+!target/keep.txt
+logs/
+!logs/**/*.log
+build/
+"#;
         let di = DockerIgnore::parse(content).unwrap();
 
         // target/ is ignored by default rule

@@ -1290,7 +1290,11 @@ mod tests {
         std::fs::write(src.join("temp/delete.txt"), "delete").unwrap();
         std::fs::write(src.join("temp/keep.txt"), "keep").unwrap();
 
-        let ignore_content = "target/\nlogs\ntemp/*\n!temp/keep.txt\n";
+        let ignore_content = r#"target/
+logs
+temp/*
+!temp/keep.txt
+"#;
         let di = super::DockerIgnore::parse(ignore_content).unwrap();
 
         super::copy_dir_with_rel(src, src, dst, false, 0, |_, _, rel_path, is_dir| {
@@ -1317,7 +1321,13 @@ mod tests {
         std::fs::write(root.join("src/lib.rs"), "// code").unwrap();
         std::fs::write(root.join("target/artifact"), "build").unwrap();
         std::fs::write(root.join("debug.log"), "log").unwrap();
-        std::fs::write(root.join(".dockerignore"), "target/\n*.log\n").unwrap();
+        std::fs::write(
+            root.join(".dockerignore"),
+            r#"target/
+*.log
+"#,
+        )
+        .unwrap();
 
         let di = super::DockerIgnore::from_dir(root).unwrap();
         let fp = super::Fingerprint::read_dir(root, true, &di).unwrap();
@@ -1340,7 +1350,9 @@ mod tests {
         std::fs::write(src.join("target/keep.txt"), "keep").unwrap();
         std::fs::write(src.join("target/delete.txt"), "delete").unwrap();
 
-        let ignore_content = "target/\n!target/keep.txt\n";
+        let ignore_content = r#"target/
+!target/keep.txt
+"#;
         let di = super::DockerIgnore::parse(ignore_content).unwrap();
 
         super::copy_dir_with_rel(src, src, dst, false, 0, |_, _, rel_path, is_dir| {
@@ -1365,7 +1377,13 @@ mod tests {
         std::fs::create_dir_all(root.join("target/debug")).unwrap();
         std::fs::write(root.join("target/debug/app"), "binary").unwrap();
         std::fs::write(root.join("target/keep.txt"), "keep").unwrap();
-        std::fs::write(root.join(".dockerignore"), "target/\n!target/keep.txt\n").unwrap();
+        std::fs::write(
+            root.join(".dockerignore"),
+            r#"target/
+!target/keep.txt
+"#,
+        )
+        .unwrap();
 
         let di = super::DockerIgnore::from_dir(root).unwrap();
         let fp = super::Fingerprint::read_dir(root, true, &di).unwrap();
