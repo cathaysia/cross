@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::io::{self, BufRead, Read, Write};
 use std::path::Path;
 use std::process::{Command, ExitStatus};
@@ -476,7 +476,7 @@ fn is_cachedir(entry: &fs::DirEntry) -> bool {
     }
 }
 
-// recursively copy a directory into another with relative path information for skip callback
+// iteratively copy a directory into another with relative path information for skip callback
 fn copy_dir_with_rel<Skip>(
     root: &Path,
     src: &Path,
@@ -489,62 +489,66 @@ where
     Skip: Copy + Fn(&fs::DirEntry, u32, &str, bool) -> bool,
 {
     let mut had_symlinks = false;
+    let mut queue = VecDeque::from([(src.to_path_buf(), dst.to_path_buf(), depth)]);
 
-    for entry in fs::read_dir(src).wrap_err_with(|| format!("when reading directory {src:?}"))? {
-        let file = entry?;
-        let src_path = file.path();
-        let file_type = file.file_type()?;
-        let is_dir = file_type.is_dir();
-        let rel_path = src_path
-            .strip_prefix(root)
-            .wrap_err_with(|| format!("when stripping prefix {root:?} from {src_path:?}"))?
-            .as_posix_relative()?;
+    while let Some((src_dir, dst_dir, depth)) = queue.pop_front() {
+        for entry in fs::read_dir(&src_dir)
+            .wrap_err_with(|| format!("when reading directory {src_dir:?}"))?
+        {
+            let file = entry?;
+            let src_path = file.path();
+            let file_type = file.file_type()?;
+            let is_dir = file_type.is_dir();
+            let rel_path = src_path
+                .strip_prefix(root)
+                .wrap_err_with(|| format!("when stripping prefix {root:?} from {src_path:?}"))?
+                .as_posix_relative()?;
 
-        if skip(&file, depth, &rel_path, is_dir) {
-            continue;
-        }
-
-        let dst_path = dst.join(file.file_name());
-        if file_type.is_file() {
-            fs::copy(&src_path, &dst_path)
-                .wrap_err_with(|| format!("when copying file {src_path:?} -> {dst_path:?}"))?;
-        } else if is_dir {
-            fs::create_dir(&dst_path).ok();
-            had_symlinks |=
-                copy_dir_with_rel(root, &src_path, &dst_path, copy_symlinks, depth + 1, skip)?;
-        } else if file_type.is_symlink() && copy_symlinks {
-            had_symlinks = true;
-            let link_dst = fs::read_link(&src_path)?;
-
-            #[cfg(target_family = "unix")]
-            {
-                std::os::unix::fs::symlink(link_dst, &dst_path)?;
+            if skip(&file, depth, &rel_path, is_dir) {
+                continue;
             }
 
-            #[cfg(target_family = "windows")]
-            {
-                let link_dst_absolute = if link_dst.is_absolute() {
-                    link_dst.clone()
-                } else {
-                    // we cannot fail even if the linked to path does not exist.
-                    src.join(&link_dst)
-                };
-                if link_dst_absolute.is_dir() {
-                    std::os::windows::fs::symlink_dir(link_dst, &dst_path)?;
-                } else {
-                    // symlink_file handles everything that isn't a directory
-                    std::os::windows::fs::symlink_file(link_dst, &dst_path)?;
+            let dst_path = dst_dir.join(file.file_name());
+            if file_type.is_file() {
+                fs::copy(&src_path, &dst_path)
+                    .wrap_err_with(|| format!("when copying file {src_path:?} -> {dst_path:?}"))?;
+            } else if is_dir {
+                fs::create_dir(&dst_path).ok();
+                queue.push_back((src_path, dst_path, depth + 1));
+            } else if file_type.is_symlink() && copy_symlinks {
+                had_symlinks = true;
+                let link_dst = fs::read_link(&src_path)?;
+
+                #[cfg(target_family = "unix")]
+                {
+                    std::os::unix::fs::symlink(link_dst, &dst_path)?;
                 }
+
+                #[cfg(target_family = "windows")]
+                {
+                    let link_dst_absolute = if link_dst.is_absolute() {
+                        link_dst.clone()
+                    } else {
+                        // we cannot fail even if the linked to path does not exist.
+                        src_dir.join(&link_dst)
+                    };
+                    if link_dst_absolute.is_dir() {
+                        std::os::windows::fs::symlink_dir(link_dst, &dst_path)?;
+                    } else {
+                        // symlink_file handles everything that isn't a directory
+                        std::os::windows::fs::symlink_file(link_dst, &dst_path)?;
+                    }
+                }
+            } else {
+                had_symlinks = true;
             }
-        } else {
-            had_symlinks = true;
         }
     }
 
     Ok(had_symlinks)
 }
 
-// recursively copy a directory into another
+// iteratively copy a directory into another
 fn copy_dir<Skip>(
     src: &Path,
     dst: &Path,
@@ -711,31 +715,35 @@ impl Fingerprint {
         copy_cache: bool,
         dockerignore: &DockerIgnore,
     ) -> Result<()> {
-        for entry in fs::read_dir(path)? {
-            let file = entry?;
-            let file_type = file.file_type()?;
-            let is_dir = file_type.is_dir();
-            let relpath = file.path().strip_prefix(home)?.as_posix_relative()?;
-            let ignored = if is_dir {
-                dockerignore.is_dir_ignored(&relpath)
-            } else {
-                dockerignore.is_ignored(&relpath, false)
-            };
-            if ignored {
-                continue;
-            }
+        let mut queue = VecDeque::from([path.to_path_buf()]);
 
-            // only parse known files types: 0 or 1 of these tests can pass.
-            if is_dir {
-                if copy_cache || !is_cachedir(&file) {
-                    self._read_dir(home, &path.join(file.file_name()), copy_cache, dockerignore)?;
+        while let Some(dir) = queue.pop_front() {
+            for entry in fs::read_dir(&dir)? {
+                let file = entry?;
+                let file_type = file.file_type()?;
+                let is_dir = file_type.is_dir();
+                let relpath = file.path().strip_prefix(home)?.as_posix_relative()?;
+                let ignored = if is_dir {
+                    dockerignore.is_dir_ignored(&relpath)
+                } else {
+                    dockerignore.is_ignored(&relpath, false)
+                };
+                if ignored {
+                    continue;
                 }
-            } else if file_type.is_file() || file_type.is_symlink() {
-                // we're mounting to the same location, so this should fine
-                // we need to round the modified date to millis.
-                let modified = file.metadata()?.modified()?;
-                let rounded = time_from_millis(time_to_millis(&modified)?);
-                self.map.insert(relpath, rounded);
+
+                // only parse known files types: 0 or 1 of these tests can pass.
+                if is_dir {
+                    if copy_cache || !is_cachedir(&file) {
+                        queue.push_back(dir.join(file.file_name()));
+                    }
+                } else if file_type.is_file() || file_type.is_symlink() {
+                    // we're mounting to the same location, so this should fine
+                    // we need to round the modified date to millis.
+                    let modified = file.metadata()?.modified()?;
+                    let rounded = time_from_millis(time_to_millis(&modified)?);
+                    self.map.insert(relpath, rounded);
+                }
             }
         }
 
